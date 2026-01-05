@@ -1,0 +1,37 @@
+name: Upstream Sync
+
+permissions:
+  contents: write
+
+on:
+  schedule:
+    - cron: "0 * * * *" # 每小时检查一次更新
+  workflow_dispatch: # 允许手动点击运行
+
+jobs:
+  sync_latest_from_upstream:
+    name: Sync latest commits from upstream repo
+    runs-on: ubuntu-latest
+    if: ${{ github.event.repository.fork }}
+
+    steps:
+      # 第一步：检出目标仓库
+      - name: Checkout target repo
+        uses: actions/checkout@v4
+
+      # 第二步：运行同步动作
+      - name: Sync upstream
+        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4.1
+        with:
+          target_repo_token: ${{ secrets.GITHUB_TOKEN }}
+          upstream_checkout_repo: DayuanJiang/next-ai-draw-io
+          upstream_checkout_branch: main
+          target_branch: main
+          test_mode: false
+
+      # 第三步：检查同步结果
+      - name: Check for errors
+        if: failure()
+        run: |
+          echo "同步失败，请检查是否有代码冲突。"
+          exit 1
