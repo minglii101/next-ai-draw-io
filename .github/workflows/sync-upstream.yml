@@ -15,18 +15,22 @@ jobs:
     if: ${{ github.event.repository.fork }}
 
     steps:
-      # 第一步：检出目标仓库
+      # 第一步：检出目标仓库（你的 fork）
       - name: Checkout target repo
         uses: actions/checkout@v4
+        with:
+          # 这一步很重要，确保使用的是你的 target 分支
+          ref: main
 
       # 第二步：运行同步动作
       - name: Sync upstream
         uses: aormsby/Fork-Sync-With-Upstream-action@v3.4.1
         with:
           target_repo_token: ${{ secrets.GITHUB_TOKEN }}
-          upstream_checkout_repo: DayuanJiang/next-ai-draw-io
-          upstream_checkout_branch: main
-          target_branch: main
+          # ！！！以下是修正后的参数名 ！！！
+          upstream_sync_repo: DayuanJiang/next-ai-draw-io
+          upstream_sync_branch: main
+          target_sync_branch: main
           test_mode: false
 
       # 第三步：检查同步结果
