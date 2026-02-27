@@ -34,7 +34,7 @@
     "chat": {
         "placeholder": "描述您的图表或上传文件...",
         "send": "发送",
-        "sending": "发送中...",
+        "stopGeneration": "停止生成",
         "sendMessage": "发送消息",
         "clearConversation": "清除对话",
         "diagramHistory": "图表历史",
@@ -77,6 +77,8 @@
     "settings": {
         "title": "设置",
         "description": "配置您的应用程序设置。",
+        "apiKeysModels": "API 密钥和模型",
+        "apiKeysModelsDescription": "配置 AI 提供商和 API 密钥。",
         "accessCode": "访问码",
         "accessCodePlaceholder": "输入访问码",
         "accessCodeDescription": "使用此应用程序需要访问码。",

@@ -8,8 +8,7 @@ import {
     PanelRightOpen,
     Settings,
 } from "lucide-react"
-import Image from "next/image"
-import { useRouter, useSearchParams } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import type React from "react"
 import {
     useCallback,
@@ -22,6 +21,7 @@ import { flushSync } from "react-dom"
 import { Toaster, toast } from "sonner"
 import { ButtonWithTooltip } from "@/components/button-with-tooltip"
 import { ChatInput } from "@/components/chat-input"
+import Image from "@/components/image-with-basepath"
 import { ModelConfigDialog } from "@/components/model-config-dialog"
 import { SettingsDialog } from "@/components/settings-dialog"
 import { useDiagram } from "@/contexts/diagram-context"
@@ -131,6 +131,7 @@ export default function ChatPanel({
 
     const dict = useDictionary()
     const router = useRouter()
+    const pathname = usePathname()
     const searchParams = useSearchParams()
     const urlSessionId = searchParams.get("session")
 
@@ -339,151 +340,155 @@ export default function ChatPanel({
         onValidationStateChange: handleValidationStateChange,
     })
 
-    const { messages, sendMessage, addToolOutput, status, error, setMessages } =
-        useChat({
-            transport: new DefaultChatTransport({
-                api: getApiEndpoint("/api/chat"),
-            }),
-            onToolCall: async ({ toolCall }) => {
-                await handleToolCall({ toolCall }, addToolOutput)
-            },
-            onError: (error) => {
-                // Handle server-side quota limit (429 response)
-                // AI SDK puts the full response body in error.message for non-OK responses
-                try {
-                    const data = JSON.parse(error.message)
-                    if (data.type === "request") {
-                        quotaManager.showQuotaLimitToast(data.used, data.limit)
-                        return
-                    }
-                    if (data.type === "token") {
-                        quotaManager.showTokenLimitToast(data.used, data.limit)
-                        return
-                    }
-                    if (data.type === "tpm") {
-                        quotaManager.showTPMLimitToast(data.limit)
-                        return
-                    }
-                } catch {
-                    // Not JSON, fall through to string matching for backwards compatibility
+    const {
+        messages,
+        sendMessage,
+        addToolOutput,
+        status,
+        error,
+        setMessages,
+        stop,
+    } = useChat({
+        transport: new DefaultChatTransport({
+            api: getApiEndpoint("/api/chat"),
+        }),
+        onToolCall: async ({ toolCall }) => {
+            await handleToolCall({ toolCall }, addToolOutput)
+        },
+        onError: (error) => {
+            // Handle server-side quota limit (429 response)
+            // AI SDK puts the full response body in error.message for non-OK responses
+            try {
+                const data = JSON.parse(error.message)
+                if (data.type === "request") {
+                    quotaManager.showQuotaLimitToast(data.used, data.limit)
+                    return
                 }
+                if (data.type === "token") {
+                    quotaManager.showTokenLimitToast(data.used, data.limit)
+                    return
+                }
+                if (data.type === "tpm") {
+                    quotaManager.showTPMLimitToast(data.limit)
+                    return
+                }
+            } catch {
+                // Not JSON, fall through to string matching for backwards compatibility
+            }
 
-                // Fallback to string matching
-                if (error.message.includes("Daily request limit")) {
-                    quotaManager.showQuotaLimitToast()
-                    return
+            // Fallback to string matching
+            if (error.message.includes("Daily request limit")) {
+                quotaManager.showQuotaLimitToast()
+                return
+            }
+            if (error.message.includes("Daily token limit")) {
+                quotaManager.showTokenLimitToast()
+                return
+            }
+            if (
+                error.message.includes("Rate limit exceeded") ||
+                error.message.includes("tokens per minute")
+            ) {
+                quotaManager.showTPMLimitToast()
+                return
+            }
+
+            // Silence access code error in console since it's handled by UI
+            if (!error.message.includes("Invalid or missing access code")) {
+                console.error("Chat error:", error)
+            }
+
+            // Translate technical errors into user-friendly messages
+            // The server now handles detailed error messages, so we can display them directly.
+            // But we still handle connection/network errors that happen before reaching the server.
+            let friendlyMessage = error.message
+
+            // Simple check for network errors if message is generic
+            if (friendlyMessage === "Failed to fetch") {
+                friendlyMessage = "Network error. Please check your connection."
+            }
+
+            // Truncated tool input error (model output limit too low)
+            if (friendlyMessage.includes("toolUse.input is invalid")) {
+                friendlyMessage =
+                    "Output was truncated before the diagram could be generated. Try a simpler request or increase the maxOutputLength."
+            }
+
+            // Translate image not supported error
+            if (
+                friendlyMessage.includes("image content block") ||
+                friendlyMessage.toLowerCase().includes("image_url")
+            ) {
+                friendlyMessage = "This model doesn't support image input."
+            }
+
+            // Add system message for error so it can be cleared
+            setMessages((currentMessages) => {
+                const errorMessage = {
+                    id: `error-${Date.now()}`,
+                    role: "system" as const,
+                    content: friendlyMessage,
+                    parts: [{ type: "text" as const, text: friendlyMessage }],
                 }
-                if (error.message.includes("Daily token limit")) {
-                    quotaManager.showTokenLimitToast()
-                    return
-                }
+                return [...currentMessages, errorMessage]
+            })
+
+            if (error.message.includes("Invalid or missing access code")) {
+                // Show settings dialog to help user fix it
+                setShowSettingsDialog(true)
+            }
+        },
+        onFinish: () => {},
+        sendAutomaticallyWhen: ({ messages }) => {
+            const isInContinuationMode = partialXmlRef.current.length > 0
+
+            const shouldRetry = hasToolErrors(
+                messages as unknown as ChatMessage[],
+            )
+
+            if (!shouldRetry) {
+                // No error, reset retry count and clear state
+                autoRetryCountRef.current = 0
+                continuationRetryCountRef.current = 0
+                partialXmlRef.current = ""
+                return false
+            }
+
+            // Continuation mode: limited retries for truncation handling
+            if (isInContinuationMode) {
                 if (
-                    error.message.includes("Rate limit exceeded") ||
-                    error.message.includes("tokens per minute")
+                    continuationRetryCountRef.current >=
+                    MAX_CONTINUATION_RETRY_COUNT
                 ) {
-                    quotaManager.showTPMLimitToast()
-                    return
-                }
-
-                // Silence access code error in console since it's handled by UI
-                if (!error.message.includes("Invalid or missing access code")) {
-                    console.error("Chat error:", error)
-                }
-
-                // Translate technical errors into user-friendly messages
-                // The server now handles detailed error messages, so we can display them directly.
-                // But we still handle connection/network errors that happen before reaching the server.
-                let friendlyMessage = error.message
-
-                // Simple check for network errors if message is generic
-                if (friendlyMessage === "Failed to fetch") {
-                    friendlyMessage =
-                        "Network error. Please check your connection."
-                }
-
-                // Truncated tool input error (model output limit too low)
-                if (friendlyMessage.includes("toolUse.input is invalid")) {
-                    friendlyMessage =
-                        "Output was truncated before the diagram could be generated. Try a simpler request or increase the maxOutputLength."
-                }
-
-                // Translate image not supported error
-                if (
-                    friendlyMessage.includes("image content block") ||
-                    friendlyMessage.toLowerCase().includes("image_url")
-                ) {
-                    friendlyMessage = "This model doesn't support image input."
-                }
-
-                // Add system message for error so it can be cleared
-                setMessages((currentMessages) => {
-                    const errorMessage = {
-                        id: `error-${Date.now()}`,
-                        role: "system" as const,
-                        content: friendlyMessage,
-                        parts: [
-                            { type: "text" as const, text: friendlyMessage },
-                        ],
-                    }
-                    return [...currentMessages, errorMessage]
-                })
-
-                if (error.message.includes("Invalid or missing access code")) {
-                    // Show settings dialog to help user fix it
-                    setShowSettingsDialog(true)
-                }
-            },
-            onFinish: () => {},
-            sendAutomaticallyWhen: ({ messages }) => {
-                const isInContinuationMode = partialXmlRef.current.length > 0
-
-                const shouldRetry = hasToolErrors(
-                    messages as unknown as ChatMessage[],
-                )
-
-                if (!shouldRetry) {
-                    // No error, reset retry count and clear state
-                    autoRetryCountRef.current = 0
+                    toast.error(
+                        formatMessage(dict.errors.continuationRetryLimit, {
+                            max: MAX_CONTINUATION_RETRY_COUNT,
+                        }),
+                    )
                     continuationRetryCountRef.current = 0
                     partialXmlRef.current = ""
                     return false
                 }
-
-                // Continuation mode: limited retries for truncation handling
-                if (isInContinuationMode) {
-                    if (
-                        continuationRetryCountRef.current >=
-                        MAX_CONTINUATION_RETRY_COUNT
-                    ) {
-                        toast.error(
-                            formatMessage(dict.errors.continuationRetryLimit, {
-                                max: MAX_CONTINUATION_RETRY_COUNT,
-                            }),
-                        )
-                        continuationRetryCountRef.current = 0
-                        partialXmlRef.current = ""
-                        return false
-                    }
-                    continuationRetryCountRef.current++
-                } else {
-                    // Regular error: check retry count limit
-                    if (autoRetryCountRef.current >= MAX_AUTO_RETRY_COUNT) {
-                        toast.error(
-                            formatMessage(dict.errors.retryLimit, {
-                                max: MAX_AUTO_RETRY_COUNT,
-                            }),
-                        )
-                        autoRetryCountRef.current = 0
-                        partialXmlRef.current = ""
-                        return false
-                    }
-                    // Increment retry count for actual errors
-                    autoRetryCountRef.current++
+                continuationRetryCountRef.current++
+            } else {
+                // Regular error: check retry count limit
+                if (autoRetryCountRef.current >= MAX_AUTO_RETRY_COUNT) {
+                    toast.error(
+                        formatMessage(dict.errors.retryLimit, {
+                            max: MAX_AUTO_RETRY_COUNT,
+                        }),
+                    )
+                    autoRetryCountRef.current = 0
+                    partialXmlRef.current = ""
+                    return false
                 }
+                // Increment retry count for actual errors
+                autoRetryCountRef.current++
+            }
 
-                return true
-            },
-        })
+            return true
+        },
+    })
 
     // Store sendMessage in ref for use in callbacks (like handleImproveWithSuggestions)
     useEffect(() => {
@@ -901,10 +906,10 @@ export default function ChatPanel({
             if (result.wasCurrentSession) {
                 // Deleted current session - clear UI and URL
                 syncUIWithSession(null)
-                router.replace(window.location.pathname, { scroll: false })
+                router.replace(pathname, { scroll: false })
             }
         },
-        [sessionManager, syncUIWithSession, router],
+        [sessionManager, syncUIWithSession, router, pathname],
     )
 
     const handleNewChat = useCallback(async () => {
@@ -937,7 +942,7 @@ export default function ChatPanel({
         toast.success(dict.dialogs.clearSuccess)
 
         // Clear URL param to show blank state
-        router.replace(window.location.pathname, { scroll: false })
+        router.replace(pathname, { scroll: false })
 
         // After starting a fresh chat, move focus back to the chat input
         setShouldFocusInput(true)
@@ -952,6 +957,7 @@ export default function ChatPanel({
         dict.dialogs.clearSuccess,
         buildSessionData,
         setDiagramHistory,
+        pathname,
     ])
 
     const handleInputChange = (
@@ -990,6 +996,29 @@ export default function ChatPanel({
             }
         }
     }
+
+    // Handle stop button click
+    const handleStop = useCallback(() => {
+        const lastMessage = messages[messages.length - 1]
+        const toolParts = lastMessage?.parts?.filter(
+            (part: any) =>
+                part.type?.startsWith("tool-") &&
+                part.state === "input-streaming",
+        )
+
+        toolParts?.forEach((part: any) => {
+            if (part.toolCallId) {
+                addToolOutput({
+                    tool: part.type.replace("tool-", ""),
+                    toolCallId: part.toolCallId,
+                    state: "output-error",
+                    errorText: "Stopped by user",
+                })
+            }
+        })
+
+        stop()
+    }, [messages, addToolOutput, stop])
 
     // Send chat message with headers
     const sendChatMessage = (
@@ -1357,6 +1386,7 @@ export default function ChatPanel({
                     status={status}
                     onSubmit={onFormSubmit}
                     onChange={handleInputChange}
+                    onStop={handleStop}
                     files={files}
                     onFileChange={handleFileChange}
                     pdfData={pdfData}
@@ -1367,8 +1397,8 @@ export default function ChatPanel({
                     models={modelConfig.models}
                     selectedModelId={modelConfig.selectedModelId}
                     onModelSelect={modelConfig.setSelectedModelId}
-                    showUnvalidatedModels={modelConfig.showUnvalidatedModels}
                     onConfigureModels={() => setShowModelConfigDialog(true)}
+                    showUnvalidatedModels={modelConfig.showUnvalidatedModels}
                     shouldFocus={shouldFocusInput}
                     onFocused={() => setShouldFocusInput(false)}
                 />
@@ -1385,6 +1415,7 @@ export default function ChatPanel({
                 onMinimalStyleChange={setMinimalStyle}
                 vlmValidationEnabled={vlmValidationEnabled}
                 onVlmValidationChange={handleVlmValidationChange}
+                onOpenModelConfig={() => setShowModelConfigDialog(true)}
             />
 
             <ModelConfigDialog

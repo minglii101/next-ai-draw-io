@@ -282,6 +282,7 @@ export function ModelConfigDialog({
         // Check credentials based on provider type
         const isBedrock = selectedProvider.provider === "bedrock"
         const isEdgeOne = selectedProvider.provider === "edgeone"
+        const isOllama = selectedProvider.provider === "ollama"
         const isVertexAI = selectedProvider.provider === "vertexai"
         if (isBedrock) {
             if (
@@ -296,7 +297,7 @@ export function ModelConfigDialog({
             if (!selectedProvider.vertexApiKey) {
                 return
             }
-        } else if (!isEdgeOne && !selectedProvider.apiKey) {
+        } else if (!isEdgeOne && !isOllama && !selectedProvider.apiKey) {
             return
         }
 
@@ -1030,9 +1031,7 @@ export function ModelConfigDialog({
                                                     </div>
                                                 </>
                                             ) : selectedProvider.provider ===
-                                                  "ollama" ||
-                                              selectedProvider.provider ===
-                                                  "edgeone" ? (
+                                              "edgeone" ? (
                                                 <div className="space-y-3">
                                                     <div className="flex items-center gap-2">
                                                         <Button
@@ -1100,6 +1099,9 @@ export function ModelConfigDialog({
                                                                 dict.modelConfig
                                                                     .apiKey
                                                             }
+                                                            {selectedProvider.provider ===
+                                                                "ollama" &&
+                                                                ` ${dict.modelConfig.optional}`}
                                                         </Label>
                                                         <div className="flex gap-2">
                                                             <div className="relative flex-1">
@@ -1163,7 +1165,9 @@ export function ModelConfigDialog({
                                                                     handleValidate
                                                                 }
                                                                 disabled={
-                                                                    !selectedProvider.apiKey ||
+                                                                    (selectedProvider.provider !==
+                                                                        "ollama" &&
+                                                                        !selectedProvider.apiKey) ||
                                                                     validationStatus ===
                                                                         "validating"
                                                                 }
@@ -1661,12 +1665,16 @@ export function ModelConfigDialog({
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                             <Switch
+                                id="show-unvalidated-models"
                                 checked={modelConfig.showUnvalidatedModels}
                                 onCheckedChange={
                                     modelConfig.setShowUnvalidatedModels
                                 }
                             />
-                            <Label className="text-xs text-muted-foreground cursor-pointer">
+                            <Label
+                                htmlFor="show-unvalidated-models"
+                                className="text-xs text-muted-foreground cursor-pointer"
+                            >
                                 {dict.modelConfig.showUnvalidatedModels}
                             </Label>
                         </div>

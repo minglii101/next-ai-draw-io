@@ -34,7 +34,7 @@
     "chat": {
         "placeholder": "Describe your diagram or upload a file...",
         "send": "Send",
-        "sending": "Sending...",
+        "stopGeneration": "Stop generation",
         "sendMessage": "Send message",
         "clearConversation": "Clear conversation",
         "diagramHistory": "Diagram history",
@@ -77,6 +77,8 @@
     "settings": {
         "title": "Settings",
         "description": "Configure your application settings.",
+        "apiKeysModels": "API Keys & Models",
+        "apiKeysModelsDescription": "Configure AI providers and API keys.",
         "accessCode": "Access Code",
         "accessCodePlaceholder": "Enter access code",
         "accessCodeDescription": "Required to use this application.",
